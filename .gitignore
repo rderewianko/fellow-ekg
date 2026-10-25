@@ -46,3 +46,6 @@ test_*.py
 .gitignore
 COMMIT_READY.md
 GITHUB_SETUP.md
+
+# ...but keep the real test suite
+!tests/test_*.py

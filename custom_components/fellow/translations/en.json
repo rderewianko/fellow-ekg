@@ -39,11 +39,15 @@
         "description": "Configure your kettle settings",
         "data": {
           "temperature_unit": "Temperature Unit",
-          "temp_set_method": "Temperature-setting method"
+          "temp_set_method": "Temperature-setting method",
+          "rapid_rise_auto_stop": "Stop heating on rapid temperature rise",
+          "rapid_rise_threshold": "Rapid rise threshold (°C/s)"
         },
         "data_description": {
           "temperature_unit": "Changing this will update both Home Assistant and the kettle's display unit",
-          "temp_set_method": "Direct uses a single firmware command (fast). Dial emulates the physical dial (slower but compatible with older firmwares)."
+          "temp_set_method": "Direct uses a single firmware command (fast). Dial emulates the physical dial (slower but compatible with older firmwares).",
+          "rapid_rise_auto_stop": "Turn the kettle off when the temperature climbs faster than the threshold, which suggests it is empty or nearly empty.",
+          "rapid_rise_threshold": "Rise rate (averaged over 10 s) that counts as rapid. A full kettle rises about 0.5 °C/s and a low fill about 1.5 °C/s. Range 1–10."
         }
       }
     }
@@ -59,6 +63,17 @@
       "options": {
         "direct": "Direct (recommended)",
         "dial": "Dial emulation (fallback)"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "on_base": {
+        "name": "On Base",
+        "state": {
+          "on": "On base",
+          "off": "Off base"
+        }
       }
     }
   }

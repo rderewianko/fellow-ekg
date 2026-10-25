@@ -7,6 +7,8 @@ import re
 from typing import Optional
 from dataclasses import dataclass
 
+from .rise import is_heating_mode, is_holding_mode
+
 _LOGGER = logging.getLogger(__name__)
 
 # Dial rotation constants
@@ -36,6 +38,30 @@ class KettleResponseError(KettleTransientError):
     """Raised when the kettle's response can't be parsed (missing fields)."""
 
 
+class KettleWakeError(Exception):
+    """The kettle could not be turned on in a way that lights the display."""
+
+
+class KettleSettingError(Exception):
+    """A setting written to the kettle didn't read back as written."""
+
+
+# Hold durations the kettle's own hold menu offers, in minutes.
+HOLD_MINUTES_OPTIONS = (15, 30, 45, 60)
+
+
+class KettleStopError(Exception):
+    """The kettle still reports heating or holding after an emergency stop."""
+
+
+@dataclass
+class EmergencyStopResult:
+    """What emergency_stop() found and did."""
+
+    mode_before: Optional[str]  # None if the kettle couldn't be read first
+    attempts: int
+
+
 @dataclass
 class KettleState:
     """Represents the current state of the kettle"""
@@ -48,11 +74,12 @@ class KettleState:
     heating: bool
     warming: bool
     screen_name: Optional[str] = None  # Current screen showing
+    raw: str = ""  # `state` response text, HTML wrapper stripped
 
     @property
     def is_heating(self) -> bool:
         """Return if kettle is in a heating cycle (based on mode, not GPIO)."""
-        return self.mode in ("S_Heat", "S_StartupToTempr", "S_Heat+menu")
+        return is_heating_mode(self.mode)
 
     @property
     def is_off(self) -> bool:
@@ -62,7 +89,7 @@ class KettleState:
     @property
     def is_holding(self) -> bool:
         """Return if kettle is in Hold (keep-warm) mode."""
-        return self.mode == "S_Hold"
+        return is_holding_mode(self.mode)
 
     @property
     def is_powered_on(self) -> bool:
@@ -78,13 +105,6 @@ class KettleState:
     def is_docked(self) -> bool:
         """Whether the kettle is sitting on the base."""
         return self.current_temp_c is not None
-
-    @property
-    def may_have_no_water(self) -> bool:
-        """Return if kettle may not have water (temp < 30C heuristic)."""
-        if self.current_temp_c is None:
-            return True
-        return self.current_temp_c < 30
 
     @property
     def current_temperature(self) -> Optional[float]:
@@ -183,6 +203,10 @@ class StaggEKGClient:
         return KettleState(
             mode=mode_match.group(1),
             screen_name=screen_match.group(1).strip() if screen_match else None,
+            raw="\n".join(
+                line.strip() for line in response.splitlines()
+                if line.strip() and not line.strip().startswith("<")
+            ),
             current_temp_c=float(temp_c_match.group(1)) if temp_c_match else None,
             set_temp_c=float(temp_set_c_match.group(1)) if temp_set_c_match else 0,
             units=int(units_match.group(1)) if units_match else 1,
@@ -201,7 +225,14 @@ class StaggEKGClient:
         return self._send_command("heatoff")
 
     def warm_on(self) -> str:
-        """Turn warming on"""
+        """Turn warming on.
+
+        Refused while the kettle is off: `warmon` drives the warming element
+        directly, so from Off it would heat with the display dark.
+        """
+        state = self.get_state()
+        if state.is_off:
+            raise KettleWakeError("Turn the kettle on before enabling warming")
         return self._send_command("warmon")
 
     def warm_off(self) -> str:
@@ -217,18 +248,24 @@ class StaggEKGClient:
         return self._send_command("2")
 
     def start_heating(self) -> str:
-        """Start a heating cycle via direct state command.
+        """Start a heating cycle the way pressing the dial does.
 
-        `ss S_Heat` tells the firmware to enter the Heat state from any
-        starting state, so we don't need to wake the kettle first or worry
-        about the button-2 toggle behavior. We still skip the command if
-        the kettle is already heating to avoid unnecessary chatter.
+        From Off this presses button 2, which wakes the display and starts
+        heating. Never use `ss S_Heat` from Off: on firmware 1.1.75SSP it ran
+        the heater while the kettle kept reporting S_Off with the display
+        dark, hiding the boil from the user and from rapid-rise detection.
+        `ss S_Heat` is only sent once the kettle is awake (e.g. holding),
+        where the display shows the change.
         """
-        state = self.get_state()
+        state = self._ensure_awake()
         if state.is_heating:
-            _LOGGER.debug("Kettle already heating, skipping start command")
-            return "already heating"
-        return self._send_command("ss S_Heat")
+            return "heating"
+        if state.is_off:
+            raise KettleWakeError(
+                f"Kettle did not wake when the dial was pressed (mode={state.mode})"
+            )
+        self._send_command("ss S_Heat")
+        return "heating"
 
     def stop_heating(self, max_attempts: int = 3) -> str:
         """Stop heating or holding via direct state command.
@@ -258,12 +295,52 @@ class StaggEKGClient:
             )
         return "stopped"
 
-    def set_warming(self, on: bool) -> str:
-        """Enable or disable keep-warm mode."""
-        if on:
-            return self.warm_on()
-        else:
-            return self.warm_off()
+    def emergency_stop(self, max_attempts: int = 3) -> EmergencyStopResult:
+        """Turn everything off, whatever mode the kettle reports.
+
+        Unlike stop_heating(), this never skips sending because the kettle
+        already reports Off: on firmware 1.1.75SSP the heater has been seen
+        running while the mode read S_Off. Each attempt sends `ss S_Off`,
+        then switches both elements off directly (`heatoff`, `warmoff`); a
+        failed command doesn't stop the others. Never send a bare `ss`, which
+        reboots the kettle.
+        """
+        try:
+            mode_before: Optional[str] = self.get_state().mode
+        except Exception:  # pylint: disable=broad-except
+            mode_before = None
+        errors = []
+        for attempt in range(1, max_attempts + 1):
+            for cmd in ("ss S_Off", "heatoff", "warmoff"):
+                try:
+                    self._send_command(cmd)
+                except Exception as err:  # pylint: disable=broad-except
+                    errors.append(f"{cmd}: {err}")
+            time.sleep(0.5)
+            try:
+                state = self.get_state()
+            except Exception as err:  # pylint: disable=broad-except
+                errors.append(f"state: {err}")
+                continue
+            if not state.is_heating and not state.is_holding:
+                return EmergencyStopResult(mode_before, attempt)
+        raise KettleStopError(
+            f"Kettle may still be on after {max_attempts} emergency stop "
+            f"attempt(s): {'; '.join(errors[-3:]) or 'mode still on'}"
+        )
+
+    def end_hold(self) -> str:
+        """Stop keeping the water warm.
+
+        Ends a hold with stop_heating() (`ss S_Off`), and clears the warming
+        element if its flag is set. A boil in progress is left alone.
+        """
+        state = self.get_state()
+        if state.is_holding:
+            self.stop_heating()
+        if state.warming:
+            self.warm_off()
+        return "off"
 
     def _ensure_awake(self) -> KettleState:
         """Wake the kettle if it's off via button 2. Returns current state.
@@ -292,6 +369,46 @@ class StaggEKGClient:
         response = self._send_command("prtsettings")
         match = re.search(r'guide=(\d+)', response)
         return bool(int(match.group(1))) if match else False
+
+    def write_target(self, target_celsius: float) -> float:
+        """Set the kettle's target with `setsetting settempr` and check it.
+
+        Unlike set_temperature(), this never falls back to turning the dial,
+        so it's safe while the kettle is holding. It takes effect at once,
+        including mid-hold, and is saved as the kettle's target setting.
+        """
+        target_f = round(target_celsius * 9 / 5 + 32)
+        self._send_command(f"setsetting settempr {target_f}")
+        time.sleep(SETTLE_DELAY)
+        actual_c = self.get_state().set_temp_c
+        if abs(round(actual_c * 9 / 5 + 32) - target_f) > 1:
+            raise KettleSettingError(
+                f"Kettle reports a {actual_c} C target after setting {target_celsius} C"
+            )
+        return actual_c
+
+    def get_hold_minutes(self) -> Optional[int]:
+        """How long the kettle holds temperature after a boil, in minutes."""
+        match = re.search(r"st: hold=(\d+)", self._send_command("prtsettings"))
+        return int(match.group(1)) if match else None
+
+    def set_hold_minutes(self, minutes: int) -> int:
+        """Set the hold duration and check that it took.
+
+        Only the values the kettle's hold menu offers are accepted. The
+        kettle's display shows the new value straight away.
+        """
+        if minutes not in HOLD_MINUTES_OPTIONS:
+            raise ValueError(
+                f"Hold must be one of {HOLD_MINUTES_OPTIONS} minutes, not {minutes}"
+            )
+        self._send_command(f"setsetting hold {minutes}")
+        actual = self.get_hold_minutes()
+        if actual != minutes:
+            raise KettleSettingError(
+                f"Kettle reports hold={actual} after setting it to {minutes}"
+            )
+        return actual
 
     def set_guide_mode(self, enabled: bool) -> str:
         """Enable or disable guide mode."""

@@ -14,9 +14,15 @@ from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
+    CONF_RAPID_RISE_AUTO_STOP,
+    CONF_RAPID_RISE_THRESHOLD,
     CONF_TEMP_SET_METHOD,
     CONF_TEMPERATURE_UNIT,
+    DEFAULT_RAPID_RISE_AUTO_STOP,
+    DEFAULT_RAPID_RISE_THRESHOLD,
     DOMAIN,
+    MAX_RAPID_RISE_THRESHOLD,
+    MIN_RAPID_RISE_THRESHOLD,
     TEMP_METHOD_DIAL,
     TEMP_METHOD_DIRECT,
     UNIT_CELSIUS,
@@ -179,6 +185,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_method = self.config_entry.data.get(
             CONF_TEMP_SET_METHOD, TEMP_METHOD_DIRECT
         )
+        current_auto_stop = self.config_entry.data.get(
+            CONF_RAPID_RISE_AUTO_STOP, DEFAULT_RAPID_RISE_AUTO_STOP
+        )
+        current_threshold = self.config_entry.data.get(
+            CONF_RAPID_RISE_THRESHOLD, DEFAULT_RAPID_RISE_THRESHOLD
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -192,6 +204,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_TEMP_SET_METHOD,
                         default=current_method,
                     ): vol.In([TEMP_METHOD_DIRECT, TEMP_METHOD_DIAL]),
+                    vol.Required(
+                        CONF_RAPID_RISE_AUTO_STOP,
+                        default=current_auto_stop,
+                    ): bool,
+                    vol.Required(
+                        CONF_RAPID_RISE_THRESHOLD,
+                        default=current_threshold,
+                    ): vol.All(
+                        vol.Coerce(float),
+                        vol.Range(
+                            min=MIN_RAPID_RISE_THRESHOLD,
+                            max=MAX_RAPID_RISE_THRESHOLD,
+                        ),
+                    ),
                 }
             ),
         )

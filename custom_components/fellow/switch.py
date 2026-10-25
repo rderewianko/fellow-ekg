@@ -6,6 +6,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -73,6 +74,9 @@ class StaggEKGHeatingSwitch(StaggEKGSwitchBase):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn heating on."""
+        # A lowered hold leaves the kettle at the Hold Target; boil to the
+        # Heat Up Target instead.
+        await self.coordinator.async_before_boil()
         # Use start_heating to properly wake screen and start heating
         await self.hass.async_add_executor_job(self.coordinator.client.start_heating)
         await self.coordinator.async_request_refresh()
@@ -84,8 +88,18 @@ class StaggEKGHeatingSwitch(StaggEKGSwitchBase):
         await self.coordinator.async_request_refresh()
 
 
+KEEP_WARM_HINT = "To keep water warm, start a new boil with Heating."
+
+
 class StaggEKGWarmingSwitch(StaggEKGSwitchBase):
-    """Switch to control warming."""
+    """On while the kettle holds the water at temperature after a boil.
+
+    The kettle has no separate warming mode: it holds for the Hold Duration
+    once a boil reaches its target. So this only reports the hold and lets
+    you end it. Turning it on is refused, because a hold should only come
+    from a boil and never run longer than configured. It doesn't drive the
+    warming element directly.
+    """
 
     def __init__(
         self, coordinator: StaggEKGDataUpdateCoordinator, entry: ConfigEntry
@@ -93,7 +107,7 @@ class StaggEKGWarmingSwitch(StaggEKGSwitchBase):
         """Initialize the switch."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_warming"
-        self._attr_name = "Warming"
+        self._attr_name = "Warming / Holding"
         self._attr_icon = "mdi:fire-circle"
 
     @property
@@ -105,11 +119,12 @@ class StaggEKGWarmingSwitch(StaggEKGSwitchBase):
         return False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn warming on."""
-        await self.hass.async_add_executor_job(self.coordinator.client.warm_on)
-        await self.coordinator.async_request_refresh()
+        """Refuse: holds only come from a boil."""
+        if self.is_on:
+            return
+        raise HomeAssistantError(KEEP_WARM_HINT)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn warming off."""
-        await self.hass.async_add_executor_job(self.coordinator.client.warm_off)
+        """End the hold; the kettle turns off."""
+        await self.hass.async_add_executor_job(self.coordinator.client.end_hold)
         await self.coordinator.async_request_refresh()

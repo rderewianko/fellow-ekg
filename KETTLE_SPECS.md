@@ -121,10 +121,14 @@ ketl= ho <heating> wd <warming> nw 0 ipb 0 bf 0 tr 0
 
 ## Safety Features
 
-### Water Detection Heuristic
-- If `temprT < 30°C` → May indicate no water
-- Not a physical sensor - temperature-based inference
-- Used to warn before heating
+### Water Detection
+- The kettle has no water-level sensor, and the `ketl=` flags don't change
+  with the water level.
+- `tempr` alone says nothing about the water level: cold water reads low
+  whether the kettle is full or nearly empty.
+- While heating, the rise rate does track the amount of water: about
+  0.5 °C/s full and 1.5 °C/s at ~0.2 L on a Stagg EKG Pro. The integration's
+  rapid-rise detection (`rise.py`) is based on this.
 
 ### Temperature Limits Enforcement
 - Dial physically limited to 40-100°C range

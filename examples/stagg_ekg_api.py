@@ -9,6 +9,15 @@ import re
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
+# Modes in which the kettle is heating or holding temperature. A screen on
+# top of a mode adds a suffix (S_Heat+tset, S_Hold+menu), so compare the
+# part before the `+`.
+ON_BASE_MODES = ("S_Heat", "S_StartupToTempr", "S_Hold")
+
+
+def _is_on(mode: str) -> bool:
+    return (mode or "").split("+", 1)[0] in ON_BASE_MODES
+
 
 @dataclass
 class KettleState:
@@ -34,21 +43,10 @@ class KettleState:
         """Return if kettle is showing a menu screen."""
         return "menu" in self.mode.lower() if self.mode else False
 
-    @property
-    def may_have_no_water(self) -> bool:
-        """
-        Return if kettle may not have water.
-        If current temp is very low (< 30°C), may indicate no water.
-        """
-        if self.current_temp_c is None:
-            return True
-        return self.current_temp_c < 30
-
     def __str__(self):
         temp_unit = "°C" if self.units == 1 else "°F"
         current = f"{self.current_temp_c}°C" if self.current_temp_c else "N/A"
-        water_status = " [LOW WATER WARNING]" if self.may_have_no_water else ""
-        return f"Mode: {self.mode}, Current: {current}, Target: {self.set_temp_c}°C ({self.set_temp_f}°F), Time: {self.clock}, Display Unit: {temp_unit}{water_status}"
+        return f"Mode: {self.mode}, Current: {current}, Target: {self.set_temp_c}°C ({self.set_temp_f}°F), Time: {self.clock}, Display Unit: {temp_unit}"
 
 
 class StaggEKGClient:
@@ -225,20 +223,27 @@ class StaggEKGClient:
         # Press button 2 (dial button) - wakes if off and starts heating
         return self._send_command("2")
 
-    def stop_heating(self) -> str:
+    def stop_heating(self, max_attempts: int = 3) -> str:
         """
-        Stop heating and return to standby.
+        Stop heating or holding and turn the kettle off.
+
+        Sends `ss S_Off`, which puts the firmware in the Off state directly,
+        and checks that it took, retrying because the kettle sometimes drops
+        the command during a state change. Pressing the dial (button 2)
+        instead toggles, so it can start the kettle again. Never send a bare
+        `ss`: it reboots the kettle.
         """
         import time
 
-        # Press button 2 to stop/cancel heating
-        self._send_command("2")
+        for _ in range(max_attempts):
+            if not _is_on(self.get_state().mode):
+                return "stopped"
+            self._send_command("ss S_Off")
+            time.sleep(0.5)
 
-        # Small delay to let kettle process the command
-        time.sleep(0.5)
-
-        # Also turn off heating element to ensure it's off
-        return self.heat_off()
+        if _is_on(self.get_state().mode):
+            return "still on"
+        return "stopped"
 
     def get_wifi_info(self) -> str:
         """Get WiFi configuration and status"""

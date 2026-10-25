@@ -70,13 +70,6 @@ import time
 
 kettle = StaggEKGClient(host="192.168.1.100")
 
-# Check water level (temperature-based heuristic)
-state = kettle.get_state()
-if state.may_have_no_water:
-    print("⚠️  Warning: Kettle may be empty (temp < 30°C)")
-    print("Please add water before heating!")
-    exit(1)
-
 # Heat water for coffee
 print("☕ Heating water for coffee (95°C)...")
 kettle.heat_to_temperature(95)
@@ -160,7 +153,6 @@ Kettle Status:
   Warming: {'Yes' if state.warming else 'No'}
   Display Unit: {'°C' if state.units == 1 else '°F'}
   Clock: {state.clock}
-  Water OK: {'No - May be empty!' if state.may_have_no_water else 'Yes'}
 """)
 ```
 
@@ -238,12 +230,6 @@ kettle = StaggEKGClient(host="192.168.1.100")
 def morning_coffee():
     """Heat water for morning coffee"""
     print("☕ Morning coffee time!")
-
-    state = kettle.get_state()
-    if state.may_have_no_water:
-        print("⚠️  Skipping: Kettle may be empty")
-        return
-
     kettle.heat_to_temperature(95)
     print("✓ Heating started")
 
@@ -270,22 +256,29 @@ while True:
 
 ## Advanced Features
 
-### Water Detection
+### Empty-Kettle Protection
+
+The kettle has no water-level sensor, and the temperature on its own says
+nothing about how much water is in it. While it heats, though, a nearly empty
+kettle warms much faster than a full one. `watch_heat_cycle()` in
+`custom_components/fellow/rise.py` watches one boil and turns the kettle off
+if the temperature climbs too fast. `rise.py` has no Home Assistant imports,
+so add its folder to your path too:
+`PYTHONPATH=.:../custom_components/fellow python boil.py`.
 
 ```python
+from rise import watch_heat_cycle
 from stagg_ekg_api import StaggEKGClient
 
 kettle = StaggEKGClient(host="192.168.1.100")
 
-state = kettle.get_state()
+kettle.heat_to_temperature(95)
+result = watch_heat_cycle(kettle.get_state, stop=kettle.stop_heating)
 
-if state.may_have_no_water:
-    print("⚠️  LOW WATER WARNING")
-    print(f"   Current temp: {state.current_temp_c}°C")
-    print("   Temperature below 30°C may indicate no water")
-    print("   Please check kettle before heating!")
-else:
-    print("✓ Water detected, safe to heat")
+if result.outcome in ("stopped", "stop_failed"):
+    print(f"⚠️  Rose at {result.triggered_rate:.1f} °C/s: the kettle may be empty")
+    if result.outcome == "stop_failed":
+        print("   It did not turn off. Check it now!")
 ```
 
 ### Temperature Monitoring Loop
@@ -303,9 +296,8 @@ try:
         state = kettle.get_state()
 
         status = "Heating" if state.heating else "Off"
-        water_ok = "✓" if not state.may_have_no_water else "⚠"
 
-        print(f"{water_ok} {state.current_temp_c:.1f}°C → {state.set_temp_c}°C | {status} | {state.mode}")
+        print(f"{state.current_temp_c:.1f}°C → {state.set_temp_c}°C | {status} | {state.mode}")
 
         time.sleep(5)
 except KeyboardInterrupt:
@@ -406,7 +398,6 @@ except Exception as e:
 | `state.mode` | str | Operating mode |
 | `state.heating` | bool | Heating element status |
 | `state.warming` | bool | Warming mode status |
-| `state.may_have_no_water` | bool | Low water warning |
 | `state.units` | int | Display units (0=°F, 1=°C) |
 | `state.clock` | str | Kettle clock time |
 
@@ -417,7 +408,7 @@ except Exception as e:
 1. **Temperature Range**: Only 40-100°C is valid
 2. **Step Size**: Each dial rotation = 0.5°C
 3. **Button 2**: The dial button (wakes and starts heating)
-4. **Water Detection**: Based on temp < 30°C (not a physical sensor)
+4. **Water Level**: There's no water sensor. Use `watch_heat_cycle()` (see Empty-Kettle Protection) to catch a nearly empty kettle while it heats
 5. **Delays**: Add small delays (0.1s) between dial rotations for reliability
 
 ---
