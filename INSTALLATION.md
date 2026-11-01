@@ -99,11 +99,11 @@ After setup, you should see:
 
 ### Custom Polling Interval
 
-Edit `custom_components/fellow/__init__.py`:
+Use the integration's **Configure** options (Polling interval, 5–60 seconds). Or edit `custom_components/fellow/__init__.py`:
 
 ```python
-# Change this line (default is 30 seconds)
-update_interval=timedelta(seconds=30),
+# Change this line (default is 5 seconds)
+update_interval=timedelta(seconds=5),
 ```
 
 ### Debug Logging

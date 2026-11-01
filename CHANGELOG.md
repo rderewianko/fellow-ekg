@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The Raw Status diagnostic sensor is now disabled by default, since it
+  changes every poll and floods the Activity Log. Enable it from the
+  entity settings when debugging.
+- Option `scan_interval` (default 5 s, range 5–60) sets the polling rate
+  while the kettle is idle. It is always polled every 5 s while heating,
+  holding, stopping after a rapid rise, or after a failed poll.
+- The hold duration is re-read every 60 s instead of every 12 polls.
+- Docs now state the real polling interval (5 seconds, not 30).
+
 ### Added
 - Rapid temperature-rise detection as a proxy for an empty or nearly empty
   kettle. New `Rapid Temperature Rise` binary sensor and `fellow_rapid_rise`

@@ -100,6 +100,17 @@ class RapidRiseDetectorTest(unittest.TestCase):
                 self.assertLess(fired[0], rise.STARTUP_GRACE_SECONDS + step)
                 self.assertAlmostEqual(detector.triggered_rate, 5.0)
 
+    def test_polls_wider_than_window_never_trigger(self):
+        # Each poll pushes the last one out of the 10 s window, so there's
+        # never a span to measure. This is why the coordinator polls every
+        # 5 s while heating, whatever the idle interval is set to.
+        for step in (11.0, 30.0, 60.0):
+            with self.subTest(polling=step):
+                detector = rise.RapidRiseDetector()
+                self.assertEqual(
+                    replay(detector, ramp(5.0, end=300.0, step=step)), [])
+                self.assertIsNone(detector.rate)
+
     def test_missing_reading_clears_history(self):
         for missing in (math.nan, None):
             with self.subTest(reading=missing):

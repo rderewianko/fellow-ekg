@@ -16,11 +16,15 @@ import homeassistant.helpers.config_validation as cv
 from .const import (
     CONF_RAPID_RISE_AUTO_STOP,
     CONF_RAPID_RISE_THRESHOLD,
+    CONF_SCAN_INTERVAL,
     CONF_TEMP_SET_METHOD,
     CONF_TEMPERATURE_UNIT,
     DEFAULT_RAPID_RISE_AUTO_STOP,
     DEFAULT_RAPID_RISE_THRESHOLD,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
     MAX_RAPID_RISE_THRESHOLD,
     MIN_RAPID_RISE_THRESHOLD,
     TEMP_METHOD_DIAL,
@@ -191,6 +195,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current_threshold = self.config_entry.data.get(
             CONF_RAPID_RISE_THRESHOLD, DEFAULT_RAPID_RISE_THRESHOLD
         )
+        current_interval = self.config_entry.data.get(
+            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -217,6 +224,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             min=MIN_RAPID_RISE_THRESHOLD,
                             max=MAX_RAPID_RISE_THRESHOLD,
                         ),
+                    ),
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=current_interval,
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                     ),
                 }
             ),

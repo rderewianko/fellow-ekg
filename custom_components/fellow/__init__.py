@@ -18,24 +18,33 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DEFAULT_RAPID_RISE_AUTO_STOP,
     DEFAULT_RAPID_RISE_THRESHOLD,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EVENT_RAPID_RISE,
     EVENT_RAPID_RISE_STOP_FAILED,
 )
 from .dock import LIFTED, DockTracker
+from .polling import poll_interval
 from .kettle import KettleTransientError, StaggEKGClient
 from .targets import HoldTimer, TargetManager
 from .rise import (
     ACTION_GIVE_UP,
     ACTION_SEND,
+    STOP_PENDING,
     STOP_STOPPED,
     AutoStopTracker,
     RapidRiseDetector,
 )
 
+# Polling runs at this interval while the kettle is heating, holding, or
+# being stopped after a rapid rise, and after a failed poll; the configured
+# scan_interval applies only while it's idle. Rapid-rise detection and the
+# failure counts below assume polls this close together.
+ACTIVE_SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+
 # After this many consecutive transient failures, give up holding the
-# last known state and let HA mark the device unavailable. At a 5s poll
-# interval that's roughly half a minute of staleness — long enough to
+# last known state and let HA mark the device unavailable. Failed polls
+# run at ACTIVE_SCAN_INTERVAL, so that's roughly half a minute of staleness — long enough to
 # absorb the "kettle just turned off" window, short enough that a truly
 # offline kettle doesn't show stale data forever.
 MAX_CONSECUTIVE_TRANSIENT_FAILURES = 6
@@ -48,7 +57,7 @@ POWER_OFF_AFTER_FAILURES = 2
 # The hold duration is a setting, not live state, so it's re-read about once
 # a minute rather than every poll; that still picks up a change made from
 # the kettle's own menu.
-HOLD_REFRESH_POLLS = 12
+HOLD_REFRESH_SECONDS = 60
 
 # A failed Hold Target / Heat Up Target write is retried at most this often.
 TARGET_RETRY_SECONDS = 60
@@ -71,6 +80,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .const import (
         CONF_RAPID_RISE_AUTO_STOP,
         CONF_RAPID_RISE_THRESHOLD,
+        CONF_SCAN_INTERVAL,
         CONF_TEMP_SET_METHOD,
         CONF_TEMPERATURE_UNIT,
         TEMP_METHOD_DIRECT,
@@ -107,6 +117,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data.get(CONF_RAPID_RISE_AUTO_STOP, DEFAULT_RAPID_RISE_AUTO_STOP),
     )
 
+    scan_interval = entry.options.get(
+        CONF_SCAN_INTERVAL,
+        entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+    )
+
     # Heat Up Target / Hold Target live in Home Assistant, since the kettle
     # has only one target; saved so a restart mid-hold doesn't lose them.
     store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.targets")
@@ -117,6 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client,
         rise_threshold=rise_threshold,
         rise_auto_stop=rise_auto_stop,
+        scan_interval=scan_interval,
         targets=TargetManager.from_dict(await store.async_load()),
         targets_store=store,
     )
@@ -160,6 +176,7 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
         client: StaggEKGClient,
         rise_threshold: float = DEFAULT_RAPID_RISE_THRESHOLD,
         rise_auto_stop: bool = DEFAULT_RAPID_RISE_AUTO_STOP,
+        scan_interval: int = DEFAULT_SCAN_INTERVAL,
         targets: TargetManager | None = None,
         targets_store: Store | None = None,
     ) -> None:
@@ -172,7 +189,8 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
         self.hold_timer = HoldTimer()
         self._next_target_retry = 0.0
         self.hold_minutes: int | None = None
-        self._polls_since_hold_read = HOLD_REFRESH_POLLS
+        self._next_hold_read = 0.0
+        self._idle_interval = timedelta(seconds=scan_interval)
         self.last_poll = None
         self.rise_detector = RapidRiseDetector(threshold=rise_threshold)
         self.rise_auto_stop = rise_auto_stop
@@ -183,7 +201,7 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=5),
+            update_interval=ACTIVE_SCAN_INTERVAL,
         )
 
     @property
@@ -206,6 +224,7 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
             # failures so HA can mark the device unavailable if it really
             # is offline.
             self._consecutive_transient_failures += 1
+            self._set_poll_interval(busy=False)
             if (
                 self.data is not None
                 and self._consecutive_transient_failures
@@ -224,23 +243,22 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._consecutive_transient_failures = 0
         self.last_poll = dt_util.utcnow()
+        now = time.monotonic()
 
-        self._polls_since_hold_read += 1
-        if self._polls_since_hold_read >= HOLD_REFRESH_POLLS:
-            self._polls_since_hold_read = 0
+        if now >= self._next_hold_read:
+            self._next_hold_read = now + HOLD_REFRESH_SECONDS
             try:
                 self.hold_minutes = await self.hass.async_add_executor_job(
                     self.client.get_hold_minutes
                 )
             except Exception as err:  # pylint: disable=broad-except
                 _LOGGER.debug("Couldn't read the hold setting: %s", err)
-                self._polls_since_hold_read = HOLD_REFRESH_POLLS  # next poll
+                self._next_hold_read = 0.0  # next poll
 
         if self.dock.update(self.last_poll, state.is_docked) == LIFTED:
             # Lifting usually means a refill, so clear any rapid-rise alert.
             self.rise_detector.reset()
 
-        now = time.monotonic()
         if self.rise_detector.update(now, state.current_temp_c, state.is_heating):
             self._handle_rapid_rise(now)
         if not self.rise_detector.triggered:
@@ -255,7 +273,22 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
                 self._next_target_retry = now + TARGET_RETRY_SECONDS
         self._save_targets()
 
+        self._set_poll_interval(
+            busy=state.is_heating
+            or state.is_holding
+            or self.auto_stop.status == STOP_PENDING
+        )
+
         return {"state": state}
+
+    def _set_poll_interval(self, *, busy: bool) -> None:
+        self.update_interval = poll_interval(
+            busy=busy,
+            failures=self._consecutive_transient_failures,
+            max_failures=MAX_CONSECUTIVE_TRANSIENT_FAILURES,
+            active=ACTIVE_SCAN_INTERVAL,
+            idle=self._idle_interval,
+        )
 
     async def async_write_target(self, target: float, *, dial_ok: bool = False) -> bool:
         """Write a target the TargetManager asked for; True if it took.
