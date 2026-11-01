@@ -24,6 +24,7 @@ from .const import (
     EVENT_RAPID_RISE_STOP_FAILED,
 )
 from .dock import LIFTED, DockTracker
+from .polling import poll_interval
 from .kettle import KettleTransientError, StaggEKGClient
 from .targets import HoldTimer, TargetManager
 from .rise import (
@@ -223,14 +224,7 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
             # failures so HA can mark the device unavailable if it really
             # is offline.
             self._consecutive_transient_failures += 1
-            if (
-                self._consecutive_transient_failures
-                <= MAX_CONSECUTIVE_TRANSIENT_FAILURES
-            ):
-                # Check back soon: the blip usually clears in seconds.
-                self.update_interval = ACTIVE_SCAN_INTERVAL
-            else:
-                self.update_interval = self._idle_interval
+            self._set_poll_interval(busy=False)
             if (
                 self.data is not None
                 and self._consecutive_transient_failures
@@ -279,14 +273,22 @@ class StaggEKGDataUpdateCoordinator(DataUpdateCoordinator):
                 self._next_target_retry = now + TARGET_RETRY_SECONDS
         self._save_targets()
 
-        active = (
-            state.is_heating
+        self._set_poll_interval(
+            busy=state.is_heating
             or state.is_holding
             or self.auto_stop.status == STOP_PENDING
         )
-        self.update_interval = ACTIVE_SCAN_INTERVAL if active else self._idle_interval
 
         return {"state": state}
+
+    def _set_poll_interval(self, *, busy: bool) -> None:
+        self.update_interval = poll_interval(
+            busy=busy,
+            failures=self._consecutive_transient_failures,
+            max_failures=MAX_CONSECUTIVE_TRANSIENT_FAILURES,
+            active=ACTIVE_SCAN_INTERVAL,
+            idle=self._idle_interval,
+        )
 
     async def async_write_target(self, target: float, *, dial_ok: bool = False) -> bool:
         """Write a target the TargetManager asked for; True if it took.
