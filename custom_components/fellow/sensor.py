@@ -181,6 +181,8 @@ class StaggEKGRawStatusSensor(StaggEKGSensorBase):
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # Changes every poll, which floods the logbook, so opt-in.
+    _attr_entity_registry_enabled_default = False
     _unrecorded_attributes = frozenset({"raw"})
 
     def __init__(

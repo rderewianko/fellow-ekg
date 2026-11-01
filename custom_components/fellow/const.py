@@ -26,6 +26,12 @@ MAX_TEMP_F = 212  # Maximum in Fahrenheit (boiling point)
 MIN_VALUE_2C = 80   # 40°C * 2
 MAX_VALUE_2C = 200  # 100°C * 2
 
+# Polling
+CONF_SCAN_INTERVAL = "scan_interval"
+DEFAULT_SCAN_INTERVAL = 5  # seconds
+MIN_SCAN_INTERVAL = 5
+MAX_SCAN_INTERVAL = 60
+
 # Rapid temperature-rise detection (see rise.py)
 CONF_RAPID_RISE_AUTO_STOP = "rapid_rise_auto_stop"
 CONF_RAPID_RISE_THRESHOLD = "rapid_rise_threshold"

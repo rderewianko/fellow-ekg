@@ -481,7 +481,7 @@ The integration uses Button 2 for power/start operations.
 
 ### Update Frequency
 
-- **Automatic polling:** Every 30 seconds
+- **Automatic polling:** Every 5 seconds while heating or holding; while idle, every 5 seconds by default, configurable (5–60 s) in the integration options
 - **Command response:** Immediate refresh after control actions
 - **Typical latency:** 1-2 seconds for commands
 
