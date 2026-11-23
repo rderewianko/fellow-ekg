@@ -6,11 +6,10 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import StaggEKGDataUpdateCoordinator
-from .const import DOMAIN
+from . import AddConfigEntryEntitiesCallback, StaggEKGDataUpdateCoordinator
+from .const import device_info, DOMAIN
 from .kettle import EmergencyStopResult, KettleStopError
 from .rise import is_heating_mode, is_holding_mode
 
@@ -39,10 +38,10 @@ def describe_result(result: EmergencyStopResult) -> str:
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Stagg EKG buttons."""
-    coordinator: StaggEKGDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: StaggEKGDataUpdateCoordinator = entry.runtime_data
 
     async_add_entities([StaggEKGEmergencyStopButton(coordinator, entry)])
 
@@ -75,13 +74,7 @@ class StaggEKGEmergencyStopButton(CoordinatorEntity, ButtonEntity):
     @property
     def device_info(self):
         """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "Stagg EKG+",
-            "manufacturer": "Fellow",
-            "model": "Stagg EKG+",
-            "sw_version": "1.1.76SSP",
-        }
+        return device_info(self._entry.entry_id)
 
     async def async_press(self) -> None:
         """Send the emergency stop and report what happened.
