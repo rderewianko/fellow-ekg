@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The water heater uses Home Assistant's `native_current_temperature`,
+  `native_target_temperature` and `native_temperature_unit`, which removes the
+  deprecation warnings logged by recent releases (the old names stop working
+  in 2027.11). Older Home Assistant versions still work. (#11)
+
 ### Changed
 - The Raw Status diagnostic sensor is now disabled by default, since it
   changes every poll and floods the Activity Log. Enable it from the
