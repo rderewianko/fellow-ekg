@@ -34,6 +34,11 @@ OPERATION_MODE_OFF = "off"
 OPERATION_MODE_HEAT = "heat"
 OPERATION_MODE_WARM = "warm"
 
+# Home Assistant renamed the water heater temperature API to native_* (the old
+# names stop working in 2027.11). Older releases only read the old
+# names, so alias them there.
+_HAS_NATIVE_API = hasattr(WaterHeaterEntity, "native_current_temperature")
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -69,13 +74,17 @@ class StaggEKGWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         # Set temperature unit based on configuration
         configured_unit = entry.data.get(CONF_TEMPERATURE_UNIT, UNIT_CELSIUS)
         if configured_unit == UNIT_FAHRENHEIT:
-            self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+            self._unit = UnitOfTemperature.FAHRENHEIT
             self._attr_min_temp = MIN_TEMP_F
             self._attr_max_temp = MAX_TEMP_F
         else:
-            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+            self._unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = MIN_TEMP_C
             self._attr_max_temp = MAX_TEMP_C
+        if _HAS_NATIVE_API:
+            self._attr_native_temperature_unit = self._unit
+        else:
+            self._attr_temperature_unit = self._unit
 
     @property
     def device_info(self):
@@ -89,25 +98,19 @@ class StaggEKGWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         }
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return the current temperature."""
         if self.coordinator.data and "state" in self.coordinator.data:
-            temp_c = self.coordinator.data["state"].current_temp_c
-            if temp_c is None:
-                return None
-            # Convert to configured unit
-            if self._attr_temperature_unit == UnitOfTemperature.FAHRENHEIT:
-                return round(temp_c * 9/5 + 32, 1)
-            return temp_c
+            return self._in_unit(self.coordinator.data["state"].current_temp_c)
         return None
 
     def _in_unit(self, temp_c: float | None) -> float | None:
-        if temp_c is not None and self._attr_temperature_unit == UnitOfTemperature.FAHRENHEIT:
+        if temp_c is not None and self._unit == UnitOfTemperature.FAHRENHEIT:
             return round(temp_c * 9/5 + 32, 1)
         return temp_c
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the Heat Up Target (what a boil heats to).
 
         water_heater.set_temperature sets it, as it always set the kettle's
@@ -115,6 +118,9 @@ class StaggEKGWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         """
         return self._in_unit(self.coordinator.targets.heat_target)
 
+    if not _HAS_NATIVE_API:
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def current_operation(self) -> str:
@@ -155,7 +161,7 @@ class StaggEKGWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             return
 
         # Convert to Celsius if needed
-        if self._attr_temperature_unit == UnitOfTemperature.FAHRENHEIT:
+        if self._unit == UnitOfTemperature.FAHRENHEIT:
             temp_celsius = (temperature - 32) * 5/9
         else:
             temp_celsius = temperature
