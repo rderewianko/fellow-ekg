@@ -5,21 +5,20 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import StaggEKGDataUpdateCoordinator
-from .const import DOMAIN
+from . import AddConfigEntryEntitiesCallback, StaggEKGDataUpdateCoordinator
+from .const import device_info
 from .kettle import HOLD_MINUTES_OPTIONS
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Stagg EKG selects."""
-    coordinator: StaggEKGDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: StaggEKGDataUpdateCoordinator = entry.runtime_data
 
     async_add_entities([StaggEKGHoldDurationSelect(coordinator, entry)])
 
@@ -52,13 +51,7 @@ class StaggEKGHoldDurationSelect(CoordinatorEntity, SelectEntity):
     @property
     def device_info(self):
         """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "Stagg EKG+",
-            "manufacturer": "Fellow",
-            "model": "Stagg EKG+",
-            "sw_version": "1.1.76SSP",
-        }
+        return device_info(self._entry.entry_id)
 
     @property
     def current_option(self) -> str | None:

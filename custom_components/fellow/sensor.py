@@ -9,22 +9,21 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from . import StaggEKGDataUpdateCoordinator
-from .const import DOMAIN
+from . import AddConfigEntryEntitiesCallback, StaggEKGDataUpdateCoordinator
+from .const import device_info
 from .targets import cooling_label
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Stagg EKG sensors."""
-    coordinator: StaggEKGDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: StaggEKGDataUpdateCoordinator = entry.runtime_data
 
     entities = [
         StaggEKGCurrentTempSensor(coordinator, entry),
@@ -51,13 +50,7 @@ class StaggEKGSensorBase(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "Stagg EKG+",
-            "manufacturer": "Fellow",
-            "model": "Stagg EKG+",
-            "sw_version": "1.1.76SSP",
-        }
+        return device_info(self._entry.entry_id)
 
 
 class StaggEKGCurrentTempSensor(StaggEKGSensorBase):

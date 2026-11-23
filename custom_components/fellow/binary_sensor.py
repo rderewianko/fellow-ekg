@@ -7,20 +7,19 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import StaggEKGDataUpdateCoordinator
-from .const import DOMAIN
+from . import AddConfigEntryEntitiesCallback, StaggEKGDataUpdateCoordinator
+from .const import device_info
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Stagg EKG binary sensors."""
-    coordinator: StaggEKGDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: StaggEKGDataUpdateCoordinator = entry.runtime_data
 
     entities = [
         StaggEKGPowerBinarySensor(coordinator, entry),
@@ -45,13 +44,7 @@ class StaggEKGBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
     @property
     def device_info(self):
         """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "Stagg EKG+",
-            "manufacturer": "Fellow",
-            "model": "Stagg EKG+",
-            "sw_version": "1.1.76SSP",
-        }
+        return device_info(self._entry.entry_id)
 
 
 class StaggEKGPowerBinarySensor(StaggEKGBinarySensorBase):

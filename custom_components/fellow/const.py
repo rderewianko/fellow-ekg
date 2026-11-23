@@ -41,3 +41,13 @@ MIN_RAPID_RISE_THRESHOLD = 1.0
 MAX_RAPID_RISE_THRESHOLD = 10.0
 EVENT_RAPID_RISE = f"{DOMAIN}_rapid_rise"
 EVENT_RAPID_RISE_STOP_FAILED = f"{DOMAIN}_rapid_rise_stop_failed"
+
+
+def device_info(entry_id: str) -> dict:
+    """Device registry info shared by every entity of one kettle."""
+    return {
+        "identifiers": {(DOMAIN, entry_id)},
+        "name": "Stagg EKG+",
+        "manufacturer": "Fellow",
+        "model": "Stagg EKG+",
+    }

@@ -9,8 +9,17 @@ All notable changes to this project will be documented in this file.
   `native_target_temperature` and `native_temperature_unit`, which removes the
   deprecation warnings logged by recent releases (the old names stop working
   in 2027.11). Older Home Assistant versions still work. (#11)
+- The Options dialog no longer fails on Home Assistant before 2024.11: the
+  minimum supported version is now 2024.11, the first release that hands
+  options flows their config entry.
+- The device page no longer shows a hard-coded firmware version (1.1.76SSP)
+  that may not match your kettle.
 
 ### Changed
+- Uses current Home Assistant APIs: the coordinator is kept in
+  `entry.runtime_data`, config flow steps return `ConfigFlowResult`, and
+  platforms use `AddConfigEntryEntitiesCallback` (falling back to
+  `AddEntitiesCallback` before 2025.2). Device info is built in one place.
 - The Raw Status diagnostic sensor is now disabled by default, since it
   changes every poll and floods the Activity Log. Enable it from the
   entity settings when debugging.
